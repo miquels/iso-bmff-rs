@@ -1,6 +1,7 @@
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use syn::{Ident, Lit, LitInt, LitStr, Token, spanned::Spanned, Result, Error};
 use syn::{parse_macro_input, token};
 use syn::parse::{Parse, ParseStream};
@@ -17,12 +18,17 @@ macro_rules! parenthesized {
     ($input:expr) => {{ let content; syn::parenthesized!(content in $input); content }}
 }
 
+mod kw {
+    syn::custom_keyword!(extends);
+    syn::custom_keyword!(optional);
+    syn::custom_keyword!(rust_type);
+}
 
 // Parse a simple u32 integer.
-fn parse_int(input: ParseStream) -> Result<u32> {
+fn parse_int(input: ParseStream) -> Result<(u32, Span)> {
     let lit: Lit = input.parse()?;
     match lit {
-        Lit::Int(lit) => lit.base10_parse::<u32>(),
+        Lit::Int(lit) => Ok((lit.base10_parse::<u32>()?, lit.span())),
         lit => Err(Error::new(lit.span(), "expected `number`")),
     }
 }
@@ -34,7 +40,7 @@ struct Aligned(u32);
 impl Parse for Aligned {
     fn parse(input: ParseStream) -> Result<Self> {
         let content = parenthesized!(input);
-        let value = parse_int(&content)?;
+        let (value, _) = parse_int(&content)?;
         Ok(Aligned(value))
     }
 }
@@ -46,22 +52,43 @@ enum Value {
     Variable(String),
 }
 
+#[derive(Debug)]
+struct ValueIdent {
+    span:   Span,
+    value:  Value,
+}
+
+impl ValueIdent {
+    fn span(&self) -> Span {
+        self.span.clone()
+    }
+}
+
 // A value: number, string, or variable.
-impl Parse for Value {
+impl Parse for ValueIdent {
     fn parse(input: ParseStream) -> Result<Self> {
 
         let lookahead = input.lookahead1();
         if lookahead.peek(LitInt) {
             let val: LitInt = input.parse()?;
-            return Ok(Value::Number(val.base10_parse::<u64>()?));
+            return Ok(ValueIdent{
+                span: val.span(),
+                value: Value::Number(val.base10_parse::<u64>()?),
+            });
         }
         if lookahead.peek(LitStr) {
             let val: LitStr = input.parse()?;
-            return Ok(Value::String(val.value()));
+            return Ok(ValueIdent{
+                span: val.span(),
+                value: Value::String(val.value()),
+            });
         }
         if lookahead.peek(Ident) {
             let val: Ident = input.parse()?;
-            return Ok(Value::Variable(val.to_string()));
+            return Ok(ValueIdent{
+                span: val.span(),
+                value: Value::Variable(val.to_string()),
+            });
         }
         Err(lookahead.error())
     }
@@ -70,8 +97,9 @@ impl Parse for Value {
 #[derive(Debug)]
 struct VarDecl {
     optional:   bool,
-    unsigned:   bool,
-    typ:        Ident,
+    template:   bool,
+    iso_type:   String,
+    rust_type:  String,
     size:       u32,
     array:      Option<u32>,
     name:       String,
@@ -83,7 +111,9 @@ impl Parse for VarDecl {
     fn parse(input: ParseStream) -> Result<Self> {
 
         let mut optional = false;
+        let mut template = false;
         let mut unsigned = false;
+        let mut signed = false;
 
         let typ = loop {
             if !input.peek(Ident) {
@@ -92,21 +122,72 @@ impl Parse for VarDecl {
             let ident: Ident = input.parse()?;
             match ident.to_string().as_str() {
                 "optional" => optional = true,
+                "template" => template = true,
                 "unsigned" => unsigned = true,
-                "int" => break ident,
-                _ => return Err(input.error("expected `type`")),
+                "signed" => signed = true,
+                "bit" => {
+                    if signed || unsigned {
+                        return Err(Error::new(ident.span(), "cannot be signed/unsigned"));
+                    }
+                    break ident;
+                },
+                "int" => {
+                    if !signed && !unsigned {
+                        return Err(Error::new(ident.span(), "signed/unsigned missing"));
+                    }
+                    break ident;
+                },
+                _ => return Err(Error::new(ident.span(), "expected `type`")),
             }
         };
 
+        // Translate typ to iso_type.
+        let mut iso_type = String::new();
+        if optional {
+            iso_type.push_str("optional ");
+        }
+        if template {
+            iso_type.push_str("template ");
+        }
+        if signed {
+            iso_type.push_str("signed ");
+        }
+        if unsigned {
+            iso_type.push_str("unsigned ");
+        }
+        iso_type.push_str(&typ.to_string());
+
         // parentheses must follow.
         let content = parenthesized!(input);
-        let size = parse_int(&content)?;
+        let (size, size_span) = parse_int(&content)?;
+
+        // Translate to a rust type.
+        let rust_type = match (typ.to_string().as_str(), signed, size) {
+            ("int", true, 8) => "i8",
+            ("int", true, 16) => "i16",
+            ("int", true, 32) => "i32",
+            ("int", true, 64) => "i64",
+            ("int", false, 8) => "u8",
+            ("int", false, 16) => "u16",
+            ("int", false, 32) => "u32",
+            ("int", false, 64) => "u64",
+            ("int", _, size) => return Err(Error::new(size_span, format!("unsupported int({})", size))),
+            ("bit", _, 1) => "bool",
+            ("bit", _, 2..=8) => "u8",
+            ("bit", _, 9..=16) => "u16",
+            ("bit", _, 17..=23) => "u32",
+            ("bit", _, 24) => "Flags",
+            ("bit", _, 25..=32) => "u32",
+            ("bit", _, size) => return Err(Error::new(size_span, format!("unsupported bit({})", size))),
+            _ => return Err(Error::new(typ.span(), "expected `type`")),
+        }.to_string();
 
         // It might be an array, see if a bracket follows
         let mut array = None;
         if input.peek(token::Bracket) {
             let content = bracketed!(input);
-            array = Some(parse_int(&content)?);
+            let (n, _) = parse_int(&content)?;
+            array = Some(n);
         }
 
         // Then the name of the variable.
@@ -122,14 +203,15 @@ impl Parse for VarDecl {
         let mut default = None;
         if input.peek(Token![=]) {
             let _: Token![=] = input.parse()?;
-            let d: Value = input.parse()?;
-            default = Some(d);
+            let d: ValueIdent = input.parse()?;
+            default = Some(d.value);
         }
 
         Ok(VarDecl{
             optional,
-            unsigned,
-            typ,
+            template,
+            iso_type,
+            rust_type,
             size,
             array,
             name,
@@ -138,24 +220,105 @@ impl Parse for VarDecl {
     }
 }
 
-// A list of VarDecl's.
+// An informative comment.
 #[derive(Debug)]
-struct VarDecls(Vec<VarDecl>);
+struct InformativeComment {
+    optional:   bool,
+    rust_type:  Option<String>,
+}
 
-impl Parse for VarDecls {
+impl Parse for InformativeComment {
     fn parse(input: ParseStream) -> Result<Self> {
-        let mut decls = Vec::new();
-        while !input.is_empty() {
-            let decl: VarDecl = input.parse()?;
-            input.parse::<Token![;]>()?;
-            decls.push(decl);
-            // The next token must be something that looks like another
-            // variable declaration. If not, bail.
-            if !input.peek(Ident) {
+        let mut res = InformativeComment {
+            optional:   false,
+            rust_type:  None,
+        };
+        input.parse::<Token![#]>()?;
+        loop {
+            let lookahead = input.lookahead1();
+            if lookahead.peek(kw::optional) {
+                // "optional"
+                input.parse::<kw::optional>()?;
+                res.optional = true;
+            } else if lookahead.peek(kw::rust_type) {
+                // "rust_type: SomeType"
+                input.parse::<kw::rust_type>()?;
+                input.parse::<Token![:]>()?;
+                if !input.peek(Ident) {
+                    return Err(input.error("expected simple rust type"));
+                }
+                let i: Ident = input.parse()?;
+                res.rust_type = Some(i.to_string());
+            } else {
+                return Err(lookahead.error());
+            }
+            println!("XXX before ; check");
+            if !input.peek(Token![;]) {
+                println!("XXX not ;");
                 break;
             }
+            println!("XXX after ; check");
+            input.parse::<Token![;]>()?;
         }
-        Ok(VarDecls(decls))
+        Ok(res)
+    }
+}
+
+// extends Box(...)
+#[derive(Debug)]
+struct Extends {
+    class:     String,
+    args:       Vec<ExtendsArg>,
+}
+
+impl Parse for Extends {
+    fn parse(input: ParseStream) -> Result<Self> {
+        // extends
+        input.parse::<kw::extends>()?;
+        // class name
+        let class: Ident = input.parse()?;
+        let content = parenthesized!(input);
+        let args: Punctuated<ExtendsArg, Token![,]> = content.parse_terminated(ExtendsArg::parse)?;
+        Ok(Extends {
+            class:  class.to_string(),
+            args:   args.into_iter().collect(),
+        })
+    }
+}
+
+// extends Box(arg, arg ..)
+#[derive(Debug)]
+struct ExtendsArg {
+    varname:    Option<String>,
+    value:      Option<Value>,
+}
+
+impl Parse for ExtendsArg {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut varname = None;
+        let mut value = None;
+        let n: ValueIdent = input.parse()?;
+        if input.is_empty() {
+            match n.value {
+                Value::Variable(var) => varname = Some(var),
+                other => value = Some(other),
+            }
+        } else {
+            match n.value {
+                Value::Variable(var) => varname = Some(var),
+                _ => return Err(Error::new(n.span(), "expected identifier")),
+            }
+            let _: token::EqEq = input.parse()?;
+            let v = input.parse::<ValueIdent>()?;
+            match v.value {
+                Value::Variable(_) => return Err(Error::new(v.span(), "expected value")),
+                other => value = Some(other),
+            }
+        }
+        Ok(ExtendsArg {
+            varname,
+            value,
+        })
     }
 }
 
@@ -163,7 +326,8 @@ impl Parse for VarDecls {
 struct ClassHeader {
     name:       Ident,
     aligned:    Option<u32>,
-    args:      Vec<VarDecl>,
+    args:       Vec<VarDecl>,
+    extends:    Option<Extends>,
 }
 
 // the stuff before { ... }
@@ -191,10 +355,16 @@ impl Parse for ClassHeader {
         let content = parenthesized!(input);
         let args:Punctuated<VarDecl, Token![,]> = content.parse_terminated(VarDecl::parse)?;
 
+        let mut extends: Option<Extends> = None;
+        if input.peek(kw::extends) {
+            extends = Some(input.parse()?);
+        }
+
         Ok(ClassHeader{
             name,
             aligned,
             args: args.into_iter().collect(),
+            extends,
         })
     }
 }
@@ -232,13 +402,13 @@ struct IfExpr {
 impl Parse for IfExpr {
     fn parse(input: ParseStream) -> Result<Self> {
         let input = parenthesized!(input);
-        let left: Value = input.parse()?;
+        let left: ValueIdent = input.parse()?;
         let op: Op = input.parse()?;
-        let right: Value = input.parse()?;
+        let right: ValueIdent = input.parse()?;
         Ok(IfExpr {
-            left,
+            left: left.value,
             op,
-            right,
+            right: right.value,
         })
     }
 }
@@ -247,8 +417,8 @@ impl Parse for IfExpr {
 #[derive(Debug)]
 struct If {
     ifexpr: IfExpr,
-    left: Stmts,
-    right: Box<Stmts>,
+    if_true: Stmts,
+    if_false: Box<Stmts>,
 }
 
 impl Parse for If {
@@ -258,24 +428,32 @@ impl Parse for If {
         let ifexpr: IfExpr = input.parse()?;
 
         // if true block.
-        let left = braced!(input);
-        let left: Stmts = left.parse()?;
+        let if_true = braced!(input);
+        let if_true: Stmts = if_true.parse()?;
 
         // else block is initiall empty.
-        let mut right = Box::new(Stmts(Vec::new()));
+        let mut if_false = Box::new(Stmts(Vec::new()));
 
         // see if there's an "else"
         if input.peek(Token![else]) {
             let _: token::Else = input.parse()?;
-            // parse whatever is after else as another Stmts block.
-            let stmts_right: Stmts = input.parse()?;
-            right = Box::new(stmts_right);
+            // mus be followed either by "if" or a block.
+            let lookahead = input.lookahead1();
+            let stmts: Stmts = if lookahead.peek(token::Brace) {
+                let if_false = braced!(input);
+                if_false.parse()?
+            } else if lookahead.peek(token::If) {
+                input.parse()?
+            } else {
+                return Err(lookahead.error());
+            };
+            if_false = Box::new(stmts);
         }
 
         Ok(If{
             ifexpr,
-            left,
-            right,
+            if_true,
+            if_false,
         })
     }
 }
@@ -295,9 +473,26 @@ impl Parse for Stmt {
             let res: If = input.parse()?;
             Ok(Stmt::If(res))
         } else if lookahead.peek(Ident) {
-            let res: VarDecl = input.parse()?;
+            let mut decl: VarDecl = input.parse()?;
             input.parse::<Token![;]>()?;
-            Ok(Stmt::VarDecl(res))
+
+            // We can have # optional; rust: RustType] _after_ the semicolon.
+            println!("XXX check for #");
+            if input.peek(Token![#]) {
+                println!("XXX found  #");
+                let c: InformativeComment = input.parse()?;
+                if c.optional {
+                    decl.optional = true;
+                    if !decl.iso_type.contains("optional") {
+                        decl.iso_type = format!("optional {}", decl.iso_type);
+                    }
+                }
+                if let Some(rt) = c.rust_type {
+                    decl.rust_type = rt;
+                }
+            }
+
+            Ok(Stmt::VarDecl(decl))
         } else {
             Err(lookahead.error())
         }
