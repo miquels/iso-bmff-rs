@@ -7,7 +7,8 @@ use syn::{parse_macro_input, token};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 
-// Helper macros.
+// Helper macros, since the original versions from the `syn` crate
+// are a bit more obtuse. This un-obstuses them.
 macro_rules! bracketed {
     ($input:expr) => {{ let content; syn::bracketed!(content in $input); content }}
 }
@@ -18,6 +19,9 @@ macro_rules! parenthesized {
     ($input:expr) => {{ let content; syn::parenthesized!(content in $input); content }}
 }
 
+// Keywords that we reckognize and use in this module.
+// Note, these are not all the keywords; some of them are
+// interpreted as Idents an parsed on-the-fly.
 mod kw {
     syn::custom_keyword!(extends);
     syn::custom_keyword!(optional);
@@ -33,6 +37,7 @@ fn parse_int(input: ParseStream) -> Result<(u32, Span)> {
     }
 }
     
+// aligned(8)
 #[derive(Debug)]
 struct Aligned(u32);
 
@@ -45,6 +50,7 @@ impl Parse for Aligned {
     }
 }
 
+// A value: number, string, or variable.
 #[derive(Debug)]
 enum Value {
     Number(u64),
@@ -52,12 +58,14 @@ enum Value {
     Variable(String),
 }
 
+// A value, with a Span for error reporting.
 #[derive(Debug)]
 struct ValueIdent {
     span:   Span,
     value:  Value,
 }
 
+// A value, with a Span for error reporting.
 impl ValueIdent {
     fn span(&self) -> Span {
         self.span.clone()
@@ -94,6 +102,7 @@ impl Parse for ValueIdent {
     }
 }
 
+// [optional] [template] unsigned int(8)[16] [0|var|var=0]
 #[derive(Debug)]
 struct VarDecl {
     optional:   bool,
@@ -106,7 +115,7 @@ struct VarDecl {
     default:    Option<Value>,
 }
 
-// optional unsigned int(8)[16] extended_type
+// [optional] [template] unsigned int(8)[16] [0|var|var=0]
 impl Parse for VarDecl {
     fn parse(input: ParseStream) -> Result<Self> {
 
@@ -227,6 +236,7 @@ struct InformativeComment {
     rust_type:  Option<String>,
 }
 
+// An informative comment.
 impl Parse for InformativeComment {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut res = InformativeComment {
@@ -252,25 +262,23 @@ impl Parse for InformativeComment {
             } else {
                 return Err(lookahead.error());
             }
-            println!("XXX before ; check");
             if !input.peek(Token![;]) {
-                println!("XXX not ;");
                 break;
             }
-            println!("XXX after ; check");
             input.parse::<Token![;]>()?;
         }
         Ok(res)
     }
 }
 
-// extends Box(...)
+// extends Box(arg, arg ..)
 #[derive(Debug)]
 struct Extends {
     class:     String,
     args:       Vec<ExtendsArg>,
 }
 
+// extends Box(arg, arg ..)
 impl Parse for Extends {
     fn parse(input: ParseStream) -> Result<Self> {
         // extends
@@ -286,13 +294,14 @@ impl Parse for Extends {
     }
 }
 
-// extends Box(arg, arg ..)
+// arguemets for extends Box(arg, arg ..)
 #[derive(Debug)]
 struct ExtendsArg {
     varname:    Option<String>,
     value:      Option<Value>,
 }
 
+// arguemets for extends Box(arg, arg ..)
 impl Parse for ExtendsArg {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut varname = None;
@@ -322,6 +331,7 @@ impl Parse for ExtendsArg {
     }
 }
 
+// Header of a class, i.e. the definitions before the body.
 #[derive(Debug)]
 struct ClassHeader {
     name:       Ident,
@@ -330,7 +340,7 @@ struct ClassHeader {
     extends:    Option<Extends>,
 }
 
-// the stuff before { ... }
+// Header of a class, i.e. the definitions before the body.
 impl Parse for ClassHeader {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut aligned = None;
@@ -369,6 +379,7 @@ impl Parse for ClassHeader {
     }
 }
 
+// Operators.
 #[derive(Debug)]
 enum Op {
     EqEq,
@@ -391,7 +402,7 @@ impl Parse for Op {
     }
 }
 
-// left == right, or left != right.
+// `if` expression. left == right, or left != right.
 #[derive(Debug)]
 struct IfExpr {
     left:   Value,
@@ -399,6 +410,7 @@ struct IfExpr {
     op:     Op,
 }
 
+// `if` expression. left == right, or left != right.
 impl Parse for IfExpr {
     fn parse(input: ParseStream) -> Result<Self> {
         let input = parenthesized!(input);
@@ -421,6 +433,7 @@ struct If {
     if_false: Box<Stmts>,
 }
 
+// if (variable == some_value) { decls } else { decls }
 impl Parse for If {
     fn parse(input: ParseStream) -> Result<Self> {
         // if (someting == whatever)
@@ -465,6 +478,7 @@ enum Stmt {
     If(If),
 }
 
+// member declaration, or an "if" expresion.
 impl Parse for Stmt {
     fn parse(input: ParseStream) -> Result<Self> {
 
@@ -477,9 +491,7 @@ impl Parse for Stmt {
             input.parse::<Token![;]>()?;
 
             // We can have # optional; rust: RustType] _after_ the semicolon.
-            println!("XXX check for #");
             if input.peek(Token![#]) {
-                println!("XXX found  #");
                 let c: InformativeComment = input.parse()?;
                 if c.optional {
                     decl.optional = true;
@@ -503,6 +515,7 @@ impl Parse for Stmt {
 #[derive(Debug)]
 struct Stmts(Vec<Stmt>);
 
+// Stmts is just a run of Stmt.
 impl Parse for Stmts {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut statements = Vec::new();
@@ -514,11 +527,13 @@ impl Parse for Stmts {
     }
 }
 
+// The body of a class is just a run of statements.
 #[derive(Debug)]
 struct ClassBody {
     statements: Stmts,
 }
 
+// The body of a class is just a run of statements.
 impl Parse for ClassBody {
     fn parse(input: ParseStream) -> Result<Self> {
         let input = braced!(input);
@@ -529,12 +544,14 @@ impl Parse for ClassBody {
     }
 }
 
+// Complete class, header and body.
 #[derive(Debug)]
 struct Class {
     head:   ClassHeader,
     body:   ClassBody,
 }
 
+// Complete class, header and body.
 impl Parse for Class {
     fn parse(input: ParseStream) -> Result<Self> {
         Ok(Class {
