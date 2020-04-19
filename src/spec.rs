@@ -1,4 +1,4 @@
-use macrotest::def_box;
+use iso_bmff_macros::def_box;
 
 // File Type Box
 def_box! {
@@ -1710,8 +1710,5 @@ def_box! {
        //other boxes from derived specifications
        BitRateBox (); // optional
     }
-}
-
-fn main() {
 }
 

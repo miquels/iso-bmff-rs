@@ -1,12 +1,10 @@
 [package]
-name = "macrotest"
+name = "iso-bmff"
 version = "0.1.0"
 authors = ["Miquel van Smoorenburg <mikevs@xs4all.net>"]
 edition = "2018"
 
 [lib]
-proc-macro = true
 
 [dependencies]
-syn = { version = "1.0.11", features = [ "full" ] }
-proc-macro2 = "1.0.6"
+iso-bmff-macros = { version = "0.1", path = "iso-bmff-macros" }
