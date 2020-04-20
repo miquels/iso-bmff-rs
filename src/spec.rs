@@ -544,7 +544,7 @@ def_box! {
        unsigned int(32) sample_description_index;
        unsigned int(32) default_sample_duration;
        unsigned int(32) default_sample_size;
-       unsigned int(32) default_sample_flags
+       unsigned int(32) default_sample_flags;
     }
 }
 
@@ -789,7 +789,7 @@ def_box! {
 
 // The Meta box
 def_box! {
-    aligned(8) class MetaBox (handler_type)
+    aligned(8) class MetaBox (unsigned int(32) handler_type)
        extends FullBox("meta", version = 0, 0) {
        HandlerBox(handler_type)   theHandler;
        PrimaryItemBox       primary_resource;                    //   optional
@@ -905,7 +905,7 @@ def_box! {
           extends FullBox("infe", version, 0) {
        if ((version == 0) || (version == 1)) {
           unsigned int(16) item_ID;
-          unsigned int(16) item_protection_index
+          unsigned int(16) item_protection_index;
           string            item_name;
           string            content_type;
           string            content_encoding; //optional
@@ -970,7 +970,7 @@ def_box! {
 
 // Protection Scheme Information Box
 def_box! {
-    aligned(8) class ProtectionSchemeInfoBox(fmt) extends Box("sinf") {
+    aligned(8) class ProtectionSchemeInfoBox(unsigned int(32) fmt) extends Box("sinf") {
        OriginalFormatBox(fmt) original_format;
          SchemeTypeBox                 scheme_type_box;    // optional
          SchemeInformationBox          info;        // optional
@@ -979,7 +979,7 @@ def_box! {
 
 // Original Format Box
 def_box! {
-    aligned(8) class OriginalFormatBox(codingname) extends Box ("frma") {
+    aligned(8) class OriginalFormatBox(unsigned int(32) codingname) extends Box ("frma") {
        unsigned int(32) data_format = codingname;
                          // format of decrypted, encoded data (in case of protection)
                          // or un-transformed sample entry (in case of restriction
@@ -1157,7 +1157,7 @@ def_box! {
 
 // Restricted Scheme Information box
 def_box! {
-    aligned(8) class RestrictedSchemeInfoBox(fmt) extends Box("rinf") {
+    aligned(8) class RestrictedSchemeInfoBox(unsigned int(32) fmt) extends Box("rinf") {
        OriginalFormatBox(fmt) original_format;
        SchemeTypeBox           scheme_type_box;
        SchemeInformationBox    info;        // optional
@@ -1166,7 +1166,7 @@ def_box! {
 
 // Stereo video box
 def_box! {
-    aligned(8) class StereoVideoBox extends extends FullBox("stvi", version = 0, 0)
+    aligned(8) class StereoVideoBox extends FullBox("stvi", version = 0, 0)
     {
        template unsigned int(30) reserved = 0;
        unsigned int(2)   single_view_allowed;
@@ -1234,7 +1234,7 @@ def_box! {
 
 // Complete Track Information Box
 def_box! {
-    aligned(8) class CompleteTrackInfoBox(fmt) extends Box("cinf") {
+    aligned(8) class CompleteTrackInfoBox(unsigned int(32) fmt) extends Box("cinf") {
        OriginalFormatBox(fmt) original_format;
     }
 }
@@ -1278,7 +1278,7 @@ def_box! {
        uint(8) trailingbyteslen;
        uint(1) precomputed_only_flag;
        uint(7) reserved;
-       box      additionaldata[];
+       Box      additionaldata[];
     }
 }
 
@@ -1347,23 +1347,6 @@ def_box! {
        unsigned int(32) maximum_bitrate;
        unsigned int(32) minimum_bitrate;
        unsigned int(8)   discard_priority;
-    }
-}
-
-// Alternative Startup Sequences
-def_box! {
-    class AlternativeStartupEntry() extends VisualSampleGroupEntry ("alst")
-    {
-      unsigned int(16) roll_count;
-      unsigned int(16) first_output_sample;
-      for (i=1; i <= roll_count; i++)
-        unsigned int(32) sample_offset[i];
-      j=1;
-      do { // optional, until the end of the structure
-        unsigned int(16) num_output_samples[j];
-        unsigned int(16) num_total_samples[j];
-        j++;
-      }
     }
 }
 
@@ -1588,15 +1571,6 @@ def_box! {
           unsigned int(4) measurement_system;
           unsigned int(4) reliability;
        }
-    }
-}
-
-def_box! {
-    aligned(8) class TrackLoudnessInfo extends LoudnessBaseBox("tlou") { }
-    aligned(8) class AlbumLoudnessInfo extends LoudnessBaseBox ("alou") { }
-    aligned(8) class LoudnessBox extends Box("ludt") {
-       loudness       TrackLoudnessInfo[]; // a set of one or more loudness boxes
-       albumLoudness AlbumLoudnessInfo[]; // if applicable
     }
 }
 

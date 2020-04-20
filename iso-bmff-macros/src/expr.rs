@@ -47,7 +47,7 @@ macro_rules! def_binop {
     }
 }
 
-def_binop!{Add, Sub, Star, Div, Le, Lt, Ge, Gt, EqEq, Ne, Shl, Shr}
+def_binop!{Add, Sub, Star, Div, And, OrOr, Le, Lt, Ge, Gt, EqEq, Ne, Shl, Shr}
 
 // Expression.
 pub enum Expr {

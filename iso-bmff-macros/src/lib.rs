@@ -111,7 +111,7 @@ impl Parse for VarDecl {
                 "int".to_string()
             } else if input.peek(kw::uint) {
                 input.parse::<kw::uint>()?;
-                "int".to_string()
+                "uint".to_string()
             } else if input.peek(kw::bit) {
                 input.parse::<kw::bit>()?;
                 "bit".to_string()
@@ -146,7 +146,7 @@ impl Parse for VarDecl {
         let rust_type;
         let mut size = 0;
 
-        if typ == "int" || typ == "bit" {
+        if typ == "int" || typ == "uint" || typ == "bit" {
             // parentheses must follow.
             let content;
             parenthesized!(content in input);
@@ -201,6 +201,21 @@ impl Parse for VarDecl {
             }
         }
         println!("XXX 2.1");
+
+        // This allows simple "ChannelLayout();" or "DownMixInstructions() []" with no name.
+        // XXX not actually correct, we allow stuff like template ChannelLayout(); etc.
+        if input.peek(Token![;]) {
+            return Ok(VarDecl{
+                optional: false,
+                template: false,
+                iso_type: iso_type.clone(),
+                rust_type: "".to_string(),
+                size,
+                array,
+                name: iso_type,
+                default: None,
+            });
+        }
 
         // Then the name of the variable.
         // This might be a rust keyword ...
@@ -662,7 +677,7 @@ impl Parse for Stmt {
     fn parse(input: ParseStream) -> Result<Self> {
 
         // silently drop "int i, j;" declarations.
-        while input.peek(kw::int) {
+        while input.peek(kw::int) && input.peek2(Ident) {
             input.parse::<kw::int>()?;
             loop {
                 input.parse::<Ident>()?;
